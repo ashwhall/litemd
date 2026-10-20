@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: xcodebuild -version
+      - run: make test
+      - run: make zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LiteMD
+          path: build/LiteMD.zip
