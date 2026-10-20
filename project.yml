@@ -48,9 +48,6 @@ targets:
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSPrincipalClass: NSApplication
         NSHumanReadableCopyright: "Copyright © 2026 Ash Hall"
-        CFBundleURLTypes:
-          - CFBundleURLName: com.ashwhall.litemd
-            CFBundleURLSchemes: [litemd]
         CFBundleDocumentTypes:
           - CFBundleTypeName: Markdown Document
             CFBundleTypeRole: Editor

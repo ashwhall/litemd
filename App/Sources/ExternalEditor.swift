@@ -20,12 +20,10 @@ enum ExternalEditor {
         }
     }
 
-    static func open(_ fileURL: URL, with appURL: URL, completion: (() -> Void)? = nil) {
+    static func open(_ fileURL: URL, with appURL: URL) {
         NSWorkspace.shared.open([fileURL], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration()) { _, error in
-            DispatchQueue.main.async {
-                if let error { NSApp.presentError(error) }
-                completion?()
-            }
+            guard let error else { return }
+            DispatchQueue.main.async { NSApp.presentError(error) }
         }
     }
 }

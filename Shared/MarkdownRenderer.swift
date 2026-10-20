@@ -40,23 +40,43 @@ enum MarkdownRenderer {
         return html
     }
 
-    /// A self-contained page for Quick Look: stylesheet inlined, local images embedded as data URLs,
-    /// and an "Edit" link that asks the app to open the file in the user's chosen editor.
+    /// A self-contained page for Quick Look: styles inlined, local images embedded as data URLs,
+    /// and highlight.js inlined only when the document has fenced code with a language.
     static func standalonePage(for markdown: String, fileURL: URL) -> String {
-        var editLink = URLComponents()
-        editLink.scheme = "litemd"
-        editLink.host = "edit"
-        editLink.queryItems = [URLQueryItem(name: "path", value: fileURL.path)]
         let body = embedLocalImages(in: html(from: markdown), relativeTo: fileURL.deletingLastPathComponent())
+        let highlighter = needsHighlighter(body)
+            ? "<script nonce=\"page\">\(highlighterScript)\n\(highlightCall)</script>"
+            : ""
         return """
             <!doctype html>
             <html><head><meta charset="utf-8">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'">
-            <style>\(stylesheet)</style>
-            </head><body>
-            <a class="edit-link" href="\(escape(editLink.string ?? ""))" title="Open in your chosen editor">Edit ↗</a>
-            <article class="markdown-body">\(body)</article></body></html>
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'nonce-page'">
+            <style>\(stylesheet)\n\(highlightStylesheet)</style>
+            </head><body><article class="markdown-body">\(body)</article>\(highlighter)</body></html>
             """
+    }
+
+    // MARK: - Syntax highlighting (highlight.js)
+
+    static func needsHighlighter(_ html: String) -> Bool { html.contains("<code class=\"language-") }
+
+    static let highlighterScript = resource("highlight.min", "js")
+
+    /// Highlights only blocks that name a language, as GitHub does.
+    static let highlightCall = "document.querySelectorAll('pre code[class*=\"language-\"]').forEach(block => hljs.highlightElement(block));"
+
+    /// Light and dark themes, switched by the system appearance.
+    static let highlightStylesheet = """
+        \(resource("hljs-light", "css"))
+        @media (prefers-color-scheme: dark) { \(resource("hljs-dark", "css")) }
+        pre code.hljs { padding: 0; background: transparent; }
+        """
+
+    static let stylesheet = resource("markdown", "css")
+
+    private static func resource(_ name: String, _ ext: String) -> String {
+        guard let url = Bundle.main.url(forResource: name, withExtension: ext) else { return "" }
+        return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
     }
 
     private static let imageSourcePattern = try! NSRegularExpression(pattern: #"(<img\b[^>]*?\bsrc=")([^"]+)(")"#)
@@ -88,12 +108,6 @@ enum MarkdownRenderer {
               let data = try? Data(contentsOf: fileURL) else { return nil }
         return "data:\(mimeType);base64,\(data.base64EncodedString())"
     }
-
-    static let stylesheet: String = {
-        guard let url = Bundle.main.url(forResource: "markdown", withExtension: "css"),
-              let css = try? String(contentsOf: url, encoding: .utf8) else { return "" }
-        return css
-    }()
 
     /// Decodes file contents, preferring UTF-8 and falling back to Foundation's detection.
     static func decode(_ data: Data) -> (text: String, encoding: String.Encoding) {

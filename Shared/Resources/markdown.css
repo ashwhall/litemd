@@ -142,21 +142,6 @@ del { color: var(--fg-muted); }
 
 details summary { cursor: pointer; }
 
-/* Quick Look's "Edit" link */
-.edit-link {
-  position: fixed;
-  top: 10px;
-  right: 12px;
-  padding: 3px 10px;
-  font-size: 12px;
-  color: var(--fg-muted);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg);
-  opacity: .8;
-}
-.edit-link:hover { opacity: 1; color: var(--link); text-decoration: none; }
-
 /* Footnotes */
 .footnotes { font-size: 85%; color: var(--fg-muted); border-top: 1px solid var(--border); padding-top: 16px; }
 .footnotes ol { padding-left: 1.5em; }
