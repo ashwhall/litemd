@@ -6,13 +6,14 @@ A tiny, fast markdown viewer and editor for macOS, with space-bar previews in Fi
 
 - GitHub Flavored Markdown: tables, task lists, strikethrough, autolinks, footnotes
 - Syntax-highlighted code blocks
-- Switch between reading and editing the markdown source with <kbd>⌘E</kbd>
+- Switch between reading and editing the markdown source with <kbd>⌘E</kbd>, keeping your place
+- Find with <kbd>⌘F</kbd> in both modes
 - Tick task-list checkboxes straight from the rendered view
 - Save with <kbd>⌘S</kbd>, with a save or discard prompt when closing
 - Reloads automatically when the file changes on disk
 - Light, dark or system appearance, remembered between launches
-- An "Edit in…" button that opens the file in the editor of your choice
-- Quick Look: select a `.md` file in Finder and press space
+- An "Edit in…" button that moves the file to the editor of your choice, offering to save first
+- Quick Look: select a `.md` file in Finder and press space for a rendered, syntax-highlighted preview
 
 Requires macOS 14 or later on Apple Silicon.
 
@@ -23,6 +24,17 @@ curl -fsSL https://raw.githubusercontent.com/ashwhall/litemd/main/install.sh | s
 ```
 
 Run the same command again to update.
+
+## Uninstall
+
+Quit LiteMD, then:
+
+```sh
+pluginkit -r /Applications/LiteMD.app/Contents/PlugIns/LiteMDQuickLook.appex
+rm -rf /Applications/LiteMD.app
+qlmanage -r
+defaults delete com.ashwhall.litemd   # optional: removes your settings
+```
 
 ## Build from source
 

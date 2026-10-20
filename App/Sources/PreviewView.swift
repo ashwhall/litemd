@@ -9,9 +9,10 @@ final class PreviewView: NSView, WKNavigationDelegate {
     private static let shellURL = URL(string: "\(scheme):///")!
 
     let webView: WKWebView
+    private let findBar = FindBar()
     private var isShellLoaded = false
     private var isHighlighterLoaded = false
-    private var current: (html: String, base: String)?
+    private var current: (html: String, base: String, scrollToLine: Int?)?
 
     /// Called with the 1-based source line of a task-list checkbox the user clicked.
     var onToggleTask: ((Int) -> Void)?
@@ -24,28 +25,93 @@ final class PreviewView: NSView, WKNavigationDelegate {
         webView = WKWebView(frame: frame, configuration: configuration)
         super.init(frame: frame)
         taskHandler.onToggle = { [weak self] line in self?.onToggleTask?(line) }
-        webView.frame = bounds
-        webView.autoresizingMask = [.width, .height]
         webView.navigationDelegate = self
         addSubview(webView)
+        findBar.isHidden = true
+        findBar.onSearch = { [weak self] query, backwards, restart in self?.find(query, backwards: backwards, restart: restart) }
+        findBar.onClose = { [weak self] in self?.hideFindBar() }
+        addSubview(findBar)
         webView.loadHTMLString(Self.shellHTML, baseURL: Self.shellURL)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    func show(markdown: String, directory: URL?) {
-        current = (MarkdownRenderer.html(from: markdown, sourcePositions: true), directory.map(Self.localURL(for:)) ?? Self.shellURL.absoluteString)
+    override func layout() {
+        super.layout()
+        let barHeight = findBar.isHidden ? 0 : FindBar.height
+        findBar.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: barHeight)
+        webView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - barHeight)
+    }
+
+    /// Renders the markdown. With `scrollToLine`, scrolls so that source line is at the top.
+    func show(markdown: String, directory: URL?, scrollToLine: Int? = nil) {
+        current = (
+            MarkdownRenderer.html(from: markdown, sourcePositions: true),
+            directory.map(Self.localURL(for:)) ?? Self.shellURL.absoluteString,
+            scrollToLine)
         pushContent()
+    }
+
+    /// The source line of the first block visible at the top of the view.
+    func topVisibleLine(completion: @escaping (Int) -> Void) {
+        guard isShellLoaded else { return completion(1) }
+        webView.evaluateJavaScript("topLine()") { result, _ in completion(result as? Int ?? 1) }
     }
 
     private func pushContent() {
         guard isShellLoaded, let current else { return }
-        if !isHighlighterLoaded, current.html.contains("<code class=\"language-") {
-            webView.evaluateJavaScript(Self.highlighterScript)
+        if !isHighlighterLoaded, MarkdownRenderer.needsHighlighter(current.html) {
+            webView.evaluateJavaScript(MarkdownRenderer.highlighterScript)
             isHighlighterLoaded = true
         }
         webView.callAsyncJavaScript(
-            "render(html, base)", arguments: ["html": current.html, "base": current.base], in: nil, in: .page)
+            "render(html, base, line)",
+            arguments: ["html": current.html, "base": current.base, "line": current.scrollToLine ?? 0],
+            in: nil, in: .page)
+        // Scroll once; later re-renders (checkbox clicks, reloads) keep the reader's position.
+        self.current?.scrollToLine = nil
+    }
+
+    // MARK: - Find
+
+    var isFindBarVisible: Bool { !findBar.isHidden }
+
+    func showFindBar() {
+        findBar.isHidden = false
+        needsLayout = true
+        window?.makeFirstResponder(findBar.field)
+        findBar.field.selectText(nil)
+    }
+
+    func hideFindBar() {
+        guard !findBar.isHidden else { return }
+        findBar.isHidden = true
+        needsLayout = true
+        window?.makeFirstResponder(webView)
+    }
+
+    /// Next or previous match for the find bar's text; opens the bar if there's nothing to search for.
+    func findAgain(backwards: Bool) {
+        guard !findBar.field.stringValue.isEmpty else { return showFindBar() }
+        find(findBar.field.stringValue, backwards: backwards, restart: false)
+    }
+
+    private func find(_ query: String, backwards: Bool, restart: Bool) {
+        guard !query.isEmpty else { return findBar.showNotFound(false) }
+        let configuration = WKFindConfiguration()
+        configuration.backwards = backwards
+        configuration.wraps = true
+        let search = { [weak self] in
+            self?.webView.find(query, configuration: configuration) { result in
+                self?.findBar.showNotFound(!result.matchFound)
+            }
+        }
+        // While typing, search from the top rather than from the previous match.
+        if restart {
+            webView.evaluateJavaScript("window.getSelection().removeAllRanges()") { _, _ in search() }
+        } else {
+            search()
+        }
     }
 
     // MARK: - WKNavigationDelegate
@@ -100,13 +166,6 @@ final class PreviewView: NSView, WKNavigationDelegate {
         return components.string ?? shellURL.absoluteString
     }
 
-    private static func resource(_ name: String, _ ext: String) -> String {
-        guard let url = Bundle.main.url(forResource: name, withExtension: ext) else { return "" }
-        return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-    }
-
-    private static let highlighterScript = resource("highlight.min", "js")
-
     // Document content can't run script: innerHTML never executes <script>, and the
     // CSP blocks inline handlers. Only the nonce'd shell script and injected code run.
     private static let shellHTML = """
@@ -116,21 +175,37 @@ final class PreviewView: NSView, WKNavigationDelegate {
         <base href="\(shellURL.absoluteString)">
         <style>
         \(MarkdownRenderer.stylesheet)
-        \(resource("hljs-light", "css"))
-        @media (prefers-color-scheme: dark) { \(resource("hljs-dark", "css")) }
-        pre code.hljs { padding: 0; background: transparent; }
+        \(MarkdownRenderer.highlightStylesheet)
         li > input[type="checkbox"] { cursor: pointer; }
         </style>
         </head><body><article class="markdown-body" id="content"></article>
         <script nonce="shell">
-        function render(html, base) {
+        function render(html, base, line) {
           document.querySelector('base').href = base;
           const content = document.getElementById('content');
           content.innerHTML = html;
-          if (window.hljs) {
-            content.querySelectorAll('pre code[class*="language-"]').forEach(block => hljs.highlightElement(block));
-          }
+          if (window.hljs) { \(MarkdownRenderer.highlightCall) }
           content.querySelectorAll('li[data-sourcepos] > input[type="checkbox"]').forEach(box => box.disabled = false);
+          if (line > 0) scrollToLine(line);
+        }
+        function startLine(element) { return parseInt(element.dataset.sourcepos, 10); }
+        // Scrolls to the last block starting at or before the line. Blocks are in source order.
+        function scrollToLine(line) {
+          let target = null;
+          for (const element of document.querySelectorAll('#content [data-sourcepos]')) {
+            if (startLine(element) > line) break;
+            target = element;
+          }
+          if (target) target.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0);
+        }
+        // The first innermost block still visible at the top of the view.
+        function topLine() {
+          for (const element of document.querySelectorAll('#content [data-sourcepos]')) {
+            if (element.getBoundingClientRect().bottom <= 0) continue;
+            if (element.querySelector('[data-sourcepos]')) continue;
+            return startLine(element);
+          }
+          return 1;
         }
         document.addEventListener('change', event => {
           const item = event.target.closest('li[data-sourcepos]');

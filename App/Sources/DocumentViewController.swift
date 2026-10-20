@@ -81,11 +81,7 @@ final class DocumentViewController: NSViewController, NSTextViewDelegate, NSMenu
     /// Flips `[ ]` / `[x]` on a source line, as an undoable edit.
     private func toggleTask(atLine line: Int) {
         let string = textView.string as NSString
-        var lineStart = 0
-        for _ in 1..<line {
-            lineStart = NSMaxRange(string.lineRange(for: NSRange(location: lineStart, length: 0)))
-            guard lineStart < string.length else { return }
-        }
+        guard let lineStart = characterIndex(ofLine: line) else { return }
         let lineRange = string.lineRange(for: NSRange(location: lineStart, length: 0))
         let lineText = string.substring(with: lineRange)
         guard let match = Self.taskPattern.firstMatch(in: lineText, range: NSRange(location: 0, length: (lineText as NSString).length)) else {
@@ -98,22 +94,77 @@ final class DocumentViewController: NSViewController, NSTextViewDelegate, NSMenu
 
     // MARK: - Mode
 
+    /// Switches views, keeping roughly the same source line at the top.
     func setMode(_ newMode: Mode) {
+        let isSwitching = newMode != mode
         mode = newMode
         scrollView.isHidden = newMode != .edit
         preview.isHidden = newMode != .rendered
         switch newMode {
         case .rendered:
-            render()
+            render(scrollToLine: isSwitching ? editorTopLine() : nil)
             view.window?.makeFirstResponder(preview.webView)
         case .edit:
+            preview.hideFindBar()
+            if isSwitching {
+                preview.topVisibleLine { [weak self] line in self?.scrollEditor(toLine: line) }
+            }
             view.window?.makeFirstResponder(textView)
         }
         onModeChange?(newMode)
     }
 
-    private func render() {
-        preview.show(markdown: document.text, directory: document.fileURL?.deletingLastPathComponent())
+    private func render(scrollToLine: Int? = nil) {
+        preview.show(markdown: document.text, directory: document.fileURL?.deletingLastPathComponent(), scrollToLine: scrollToLine)
+    }
+
+    /// The 1-based source line at the top of the editor's visible area.
+    private func editorTopLine() -> Int {
+        guard let layoutManager = textView.textLayoutManager, let content = layoutManager.textContentManager else { return 1 }
+        let top = CGPoint(x: 0, y: max(0, textView.visibleRect.minY - textView.textContainerOrigin.y))
+        guard let fragment = layoutManager.textLayoutFragment(for: top) else { return 1 }
+        let index = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
+        let prefix = (textView.string as NSString).substring(to: min(index, (textView.string as NSString).length))
+        return prefix.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+    }
+
+    private func scrollEditor(toLine line: Int) {
+        guard let index = characterIndex(ofLine: line),
+              let layoutManager = textView.textLayoutManager, let content = layoutManager.textContentManager,
+              let location = content.location(content.documentRange.location, offsetBy: index),
+              let range = NSTextRange(location: content.documentRange.location, end: location) else { return }
+        layoutManager.ensureLayout(for: range)
+        guard let fragment = layoutManager.textLayoutFragment(for: location) else { return }
+        textView.scroll(NSPoint(x: 0, y: fragment.layoutFragmentFrame.minY + textView.textContainerOrigin.y))
+    }
+
+    /// The character index where a 1-based line starts, or nil past the end of the text.
+    private func characterIndex(ofLine line: Int) -> Int? {
+        let string = textView.string as NSString
+        var index = 0
+        for _ in 1..<max(line, 1) {
+            index = NSMaxRange(string.lineRange(for: NSRange(location: index, length: 0)))
+            guard index < string.length else { return nil }
+        }
+        return index
+    }
+
+    // MARK: - Find in Read mode
+
+    /// In Edit mode the text view handles find itself; this only runs in Read mode.
+    override func performTextFinderAction(_ sender: Any?) {
+        guard mode == .rendered, let action = NSTextFinder.Action(rawValue: (sender as? NSMenuItem)?.tag ?? 0) else { return }
+        switch action {
+        case .showFindInterface: preview.showFindBar()
+        case .nextMatch: preview.findAgain(backwards: false)
+        case .previousMatch: preview.findAgain(backwards: true)
+        case .hideFindInterface: preview.hideFindBar()
+        default: break
+        }
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        preview.hideFindBar()
     }
 
     @objc func toggleMode(_ sender: Any?) {
@@ -122,47 +173,36 @@ final class DocumentViewController: NSViewController, NSTextViewDelegate, NSMenu
 
     // MARK: - Edit in…
 
+    /// Moves the document to the user's editor: settles unsaved changes, opens the file there,
+    /// then closes it here so it isn't open in two places.
     @objc func openInExternalEditor(_ sender: Any?) {
-        guard let appURL = Preferences.editorAppURL else {
+        guard Preferences.editorAppURL != nil else {
             ExternalEditor.chooseApp(for: view.window) { [weak self] url in
                 if url != nil { self?.openInExternalEditor(sender) }
             }
             return
         }
-        guard let fileURL = document.fileURL, !document.isDocumentEdited else {
-            confirmSaveThenOpen(with: appURL)
-            return
-        }
-        ExternalEditor.open(fileURL, with: appURL)
-    }
-
-    private func confirmSaveThenOpen(with appURL: URL) {
-        guard let window = view.window else { return }
-        let alert = NSAlert()
-        let appName = Preferences.editorAppName ?? "the editor"
-        alert.messageText = "Save changes before opening in \(appName)?"
-        alert.informativeText = document.fileURL == nil
-            ? "The document needs to be saved before another app can open it."
-            : "Otherwise \(appName) opens the last saved version."
-        alert.addButton(withTitle: "Save")
-        if document.fileURL != nil { alert.addButton(withTitle: "Open Saved Version") }
-        alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard let self else { return }
-            switch response {
-            case .alertFirstButtonReturn:
-                document.save(withDelegate: self, didSave: #selector(document(_:didSave:contextInfo:)), contextInfo: nil)
-            case .alertSecondButtonReturn where document.fileURL != nil:
-                ExternalEditor.open(document.fileURL!, with: appURL)
-            default:
-                break
-            }
+        if document.fileURL == nil {
+            // Never saved, so there's no file for the editor to open yet.
+            document.save(withDelegate: self, didSave: #selector(document(_:didSave:contextInfo:)), contextInfo: nil)
+        } else {
+            // The standard Save / Don't Save / Cancel prompt, shown only when there are unsaved changes.
+            document.canClose(withDelegate: self, shouldClose: #selector(document(_:shouldClose:contextInfo:)), contextInfo: nil)
         }
     }
 
     @objc private func document(_ document: NSDocument, didSave: Bool, contextInfo: UnsafeMutableRawPointer?) {
-        guard didSave, let fileURL = document.fileURL, let appURL = Preferences.editorAppURL else { return }
+        if didSave { handOffToEditor() }
+    }
+
+    @objc private func document(_ document: NSDocument, shouldClose: Bool, contextInfo: UnsafeMutableRawPointer?) {
+        if shouldClose { handOffToEditor() }
+    }
+
+    private func handOffToEditor() {
+        guard let fileURL = document.fileURL, let appURL = Preferences.editorAppURL else { return }
         ExternalEditor.open(fileURL, with: appURL)
+        document.close()
     }
 
     // MARK: - Formatting
@@ -222,6 +262,8 @@ final class DocumentViewController: NSViewController, NSTextViewDelegate, NSMenu
         case #selector(openInExternalEditor(_:)):
             item.title = Preferences.editorAppName.map { "Edit in \($0)" } ?? "Edit in…"
             return true
+        case #selector(performTextFinderAction(_:)):
+            return mode == .rendered && item.tag != NSTextFinder.Action.showReplaceInterface.rawValue
         case #selector(formatBold(_:)), #selector(formatItalic(_:)), #selector(formatCode(_:)),
              #selector(formatLink(_:)), #selector(formatHeading(_:)):
             return mode == .edit

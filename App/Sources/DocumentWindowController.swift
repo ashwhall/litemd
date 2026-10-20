@@ -6,15 +6,24 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     private var editInItem: NSToolbarItem?
     private var preferencesObserver: NSObjectProtocol?
 
+    /// New windows open at the size the user last resized one to.
+    private static let sizeKey = "documentWindowSize"
+    private static var savedContentSize: NSSize {
+        let saved = UserDefaults.standard.string(forKey: sizeKey).map(NSSizeFromString)
+        guard let saved, saved.width >= 420, saved.height >= 300 else { return NSSize(width: 820, height: 900) }
+        return saved
+    }
+
     init(document: Document) {
         content = DocumentViewController(document: document)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 820, height: 900),
+            contentRect: NSRect(origin: .zero, size: Self.savedContentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         window.contentViewController = content
-        window.setContentSize(NSSize(width: 820, height: 900))
+        window.setContentSize(Self.savedContentSize)
         window.minSize = NSSize(width: 420, height: 300)
+        window.center()
         window.toolbarStyle = .unified
         super.init(window: window)
         window.delegate = self
@@ -41,6 +50,12 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
 
     func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
         document?.undoManager
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        guard let window, !window.styleMask.contains(.fullScreen) else { return }
+        let size = window.contentRect(forFrameRect: window.frame).size
+        UserDefaults.standard.set(NSStringFromSize(size), forKey: Self.sizeKey)
     }
 
     private func modeDidChange(_ mode: DocumentViewController.Mode) {
