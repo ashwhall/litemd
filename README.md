@@ -1,6 +1,6 @@
 # LiteMD
 
-<sub>🤖 Mostly vibe-coded with an AI assistant. It does the job, but expect the odd rough edge.</sub>
+<sub>🤖 Vibe-coded. It does the job, but expect the odd rough edge.</sub>
 
 A tiny, fast markdown viewer and editor for macOS, with space-bar previews in Finder.
 
