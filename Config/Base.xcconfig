@@ -8,3 +8,6 @@ CODE_SIGN_IDENTITY = -
 DEVELOPMENT_TEAM =
 
 #include? "Signing.local.xcconfig"
+
+// Ad-hoc signing otherwise adds the get-task-allow debugging entitlement.
+CODE_SIGN_INJECT_BASE_ENTITLEMENTS[config=Release] = NO
