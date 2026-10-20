@@ -56,17 +56,16 @@ final class PreviewView: NSView, WKNavigationDelegate {
         pushContent()
     }
 
-    func webView(
-        _ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
-        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
-    ) {
-        guard let url = action.request.url else { return decisionHandler(.cancel) }
+    // The async form has the same signature in every SDK, so it can't silently stop matching.
+    @MainActor
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
+        guard let url = action.request.url else { return .cancel }
         if action.navigationType != .linkActivated {
             // Only the shell page itself may load; content can't navigate the view away.
-            return decisionHandler(url == Self.shellURL ? .allow : .cancel)
+            return url == Self.shellURL ? .allow : .cancel
         }
-        decisionHandler(.cancel)
         openLink(url)
+        return .cancel
     }
 
     private func openLink(_ url: URL) {
