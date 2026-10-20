@@ -1,0 +1,117 @@
+name: LiteMD
+options:
+  bundleIdPrefix: com.ashwhall
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    ARCHS: arm64
+    ENABLE_HARDENED_RUNTIME: YES
+    DEAD_CODE_STRIPPING: YES
+packages:
+  SwiftCmark:
+    url: https://github.com/swiftlang/swift-cmark
+    branch: gfm
+targets:
+  LiteMD:
+    type: application
+    platform: macOS
+    sources:
+      - App
+      - Shared
+    dependencies:
+      - package: SwiftCmark
+        product: cmark-gfm
+      - package: SwiftCmark
+        product: cmark-gfm-extensions
+      - target: LiteMDQuickLook
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ashwhall.litemd
+        PRODUCT_NAME: LiteMD
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: LiteMD
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.productivity
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSPrincipalClass: NSApplication
+        NSHumanReadableCopyright: "Copyright © 2026 Ash Hall"
+        CFBundleURLTypes:
+          - CFBundleURLName: com.ashwhall.litemd
+            CFBundleURLSchemes: [litemd]
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Markdown Document
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [net.daringfireball.markdown]
+            NSDocumentClass: $(PRODUCT_MODULE_NAME).Document
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: net.daringfireball.markdown
+            UTTypeDescription: Markdown Document
+            UTTypeConformsTo: [public.plain-text]
+            UTTypeTagSpecification:
+              public.filename-extension: [md, markdown, mdown, mkd, mkdn]
+              public.mime-type: [text/markdown]
+  LiteMDTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests
+      - path: Shared
+        excludes: [Resources]
+    dependencies:
+      - package: SwiftCmark
+        product: cmark-gfm
+      - package: SwiftCmark
+        product: cmark-gfm-extensions
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  LiteMDQuickLook:
+    type: app-extension
+    platform: macOS
+    sources:
+      - QuickLook
+      - Shared
+    dependencies:
+      - package: SwiftCmark
+        product: cmark-gfm
+      - package: SwiftCmark
+        product: cmark-gfm-extensions
+      - sdk: Quartz.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ashwhall.litemd.quicklook
+        PRODUCT_NAME: LiteMDQuickLook
+        GENERATE_INFOPLIST_FILE: NO
+    entitlements:
+      path: QuickLook/QuickLook.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        # Read-only, so relative images next to the previewed file can be embedded.
+        com.apple.security.temporary-exception.files.absolute-path.read-only: [/]
+    info:
+      path: QuickLook/Info.plist
+      properties:
+        CFBundleDisplayName: LiteMD Quick Look
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.quicklook.preview
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PreviewProvider
+          NSExtensionAttributes:
+            QLIsDataBasedPreview: true
+            QLSupportsSearchableItems: false
+            QLSupportedContentTypes: [net.daringfireball.markdown]
